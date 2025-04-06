@@ -114,18 +114,18 @@ For AWS-native deployment, you can use the included CloudFormation template with
 ### Deployment Steps
 
 1. Generate CloudFormation parameters file from your created AMIs:
-   ```bash
-   cd scripts/aws
-   ./create_cf_parameters.sh
+```bash
+cd scripts/aws
+./create_cf_parameters.sh
 ```
 Deploy the CloudFormation stack:
-		```bash
-		aws cloudformation create-stack \
-      --stack-name hpc-bursting-demo \
-      --template-body file://../../cloudformation/hpc-bursting-infrastructure.yaml \
-      --parameters file://../../cloudformation/ami-parameters.json \
-      --capabilities CAPABILITY_IAM \
-      --region us-west-2
+```bash
+aws cloudformation create-stack \
+  --stack-name hpc-bursting-demo \
+  --template-body file://../../cloudformation/hpc-bursting-infrastructure.yaml \
+  --parameters file://../../cloudformation/ami-parameters.json \
+  --capabilities CAPABILITY_IAM \
+  --region us-west-2
 ```
 Monitor stack creation:
 ```bash
