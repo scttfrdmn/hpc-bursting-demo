@@ -105,25 +105,72 @@ See the [Installation Guide](docs/installation.md) for detailed setup instructio
 
 ## CloudFormation Deployment
 
-For AWS-native deployment, you can use the included CloudFormation template:
+For AWS-native deployment, you can use the included CloudFormation template with the AMIs created in the previous steps:
 
-1. Go to the AWS CloudFormation console
-2. Create a new stack using the template in `cloudformation/hpc-bursting-infrastructure.yaml`
-3. Fill in the required parameters:
-   - VPC ID and subnet IDs
-   - WireGuard public key from your local HPC system
-   - Architecture (x86_64 or arm64)
-   - Local HPC IP address
+### Prerequisites
+- Complete the AMI creation steps (running `setup_aws_infra.sh` or at least the `04_create_amis.sh` script)
+- AWS CLI configured with appropriate permissions
 
-After the stack is created, note the output values and update your local configuration with:
-- Bastion public IP
-- Security group ID
-- Launch template IDs
+### Deployment Steps
 
-For a complete automated setup, you can run the following from your local HPC system:
-```bash
-./scripts/aws/update_config_from_cloudformation.sh YOUR_STACK_NAME
+1. Generate CloudFormation parameters file from your created AMIs:
+   ```bash
+   cd scripts/aws
+   ./create_cf_parameters.sh
 ```
+Deploy the CloudFormation stack:
+		```bash
+		aws cloudformation create-stack \
+      --stack-name hpc-bursting-demo \
+      --template-body file://../../cloudformation/hpc-bursting-infrastructure.yaml \
+      --parameters file://../../cloudformation/ami-parameters.json \
+      --capabilities CAPABILITY_IAM \
+      --region us-west-2
+```
+Monitor stack creation:
+```bash
+aws cloudformation describe-stacks --stack-name hpc-bursting-demo
+```
+Once the stack is complete, retrieve the outputs:
+```bash
+aws cloudformation describe-stacks \
+  --stack-name hpc-bursting-demo \
+  --query 'Stacks[0].Outputs' \
+  --output table
+```
+Update your local WireGuard configuration with the bastion host's public IP:
+```bash
+BASTION_PUBLIC_IP=$(aws cloudformation describe-stacks \
+  --stack-name hpc-bursting-demo \
+  --query 'Stacks[0].Outputs[?OutputKey==`BastionPublicIP`].OutputValue' \
+  --output text)
+
+# Get the bastion's WireGuard public key
+BASTION_PUBLIC_KEY=$(ssh -i hpc-demo-key.pem rocky@$BASTION_PUBLIC_IP "cat /etc/wireguard/publickey")
+
+# Update your local WireGuard configuration
+cat << WIREGUARD | sudo tee -a /etc/wireguard/wg0.conf
+[Peer]
+PublicKey = $BASTION_PUBLIC_KEY
+AllowedIPs = 10.0.0.2/32, 10.1.0.0/16
+Endpoint = $BASTION_PUBLIC_IP:51820
+PersistentKeepalive = 25
+WIREGUARD
+
+sudo systemctl restart wg-quick@wg0
+```
+Update the Slurm AWS plugin configuration with the CloudFormation outputs:
+```bash
+cd scripts/aws
+./update_slurm_from_cloudformation.sh hpc-bursting-demo
+```
+
+Clean Up
+To delete the CloudFormation stack when you're done:
+```bash
+aws cloudformation delete-stack --stack-name hpc-bursting-demo
+```
+This provides a clean approach to integrating your existing AMI creation script with CloudFormation, and gives users clear instructions on how to use the CloudFormation-based deployment method.
 
 ## License
 
