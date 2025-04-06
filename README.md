@@ -118,7 +118,8 @@ For AWS-native deployment, you can use the included CloudFormation template with
 cd scripts/aws
 ./create_cf_parameters.sh
 ```
-Deploy the CloudFormation stack:
+2. Deploy the CloudFormation stack:
+
 ```bash
 aws cloudformation create-stack \
   --stack-name hpc-bursting-demo \
@@ -127,18 +128,21 @@ aws cloudformation create-stack \
   --capabilities CAPABILITY_IAM \
   --region us-west-2
 ```
-Monitor stack creation:
+3. Monitor stack creation:
+
 ```bash
 aws cloudformation describe-stacks --stack-name hpc-bursting-demo
 ```
-Once the stack is complete, retrieve the outputs:
+4. Once the stack is complete, retrieve the outputs:
+
 ```bash
 aws cloudformation describe-stacks \
   --stack-name hpc-bursting-demo \
   --query 'Stacks[0].Outputs' \
   --output table
 ```
-Update your local WireGuard configuration with the bastion host's public IP:
+5. Update your local WireGuard configuration with the bastion host's public IP:
+
 ```bash
 BASTION_PUBLIC_IP=$(aws cloudformation describe-stacks \
   --stack-name hpc-bursting-demo \
@@ -159,14 +163,17 @@ WIREGUARD
 
 sudo systemctl restart wg-quick@wg0
 ```
-Update the Slurm AWS plugin configuration with the CloudFormation outputs:
+6. Update the Slurm AWS plugin configuration with the CloudFormation outputs:
+
 ```bash
 cd scripts/aws
 ./update_slurm_from_cloudformation.sh hpc-bursting-demo
 ```
 
-Clean Up
-To delete the CloudFormation stack when you're done:
+7. Clean Up
+
+   To delete the CloudFormation stack when you're done:
+
 ```bash
 aws cloudformation delete-stack --stack-name hpc-bursting-demo
 ```
