@@ -13,7 +13,6 @@ This guide provides step-by-step instructions for setting up the HPC bursting de
 
 ### 1. Clone the Repository
 
-```bash
 git clone https://github.com/yourusername/hpc-bursting-demo.git
 cd hpc-bursting-demo
 
