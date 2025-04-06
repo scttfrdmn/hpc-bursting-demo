@@ -1,0 +1,395 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'HPC Bursting Demo - AWS Infrastructure'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the infrastructure will be deployed
+  
+  PublicSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for the bastion host
+  
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for compute nodes
+    
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Key pair for SSH access to instances
+    
+  Architecture:
+    Type: String
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+    Description: Architecture for instances (x86_64 or arm64)
+    
+  LocalHpcIp:
+    Type: String
+    Default: 10.0.0.1
+    Description: IP address of the local HPC system
+    
+  WireguardPublicKey:
+    Type: String
+    Description: WireGuard public key from local HPC system
+    
+Resources:
+  # IAM Roles
+  SlurmPluginRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      
+  SlurmPluginPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: SlurmPluginPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:RunInstances
+              - ec2:TerminateInstances
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceStatus
+              - ec2:CreateTags
+              - ec2:DescribeTags
+              - ec2:DescribeImages
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeVpcs
+              - ec2:DescribeLaunchTemplates
+              - ec2:DescribeLaunchTemplateVersions
+              - ec2:CreateFleet
+            Resource: '*'
+      Roles:
+        - !Ref SlurmPluginRole
+        
+  ComputeNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        
+  ComputeNodePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ComputeNodePolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeTags
+            Resource: '*'
+      Roles:
+        - !Ref ComputeNodeRole
+        
+  # Security Groups
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for HPC bursting bastion host
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH from anywhere
+        - IpProtocol: udp
+          FromPort: 51820
+          ToPort: 51820
+          CidrIp: 0.0.0.0/0
+          Description: WireGuard VPN
+      Tags:
+        - Key: Name
+          Value: hpc-demo-bastion-sg
+        - Key: Project
+          Value: HPC-Bursting-Demo
+          
+  ComputeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for HPC bursting compute nodes
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: hpc-demo-compute-sg
+        - Key: Project
+          Value: HPC-Bursting-Demo
+          
+  ComputeSecurityGroupIngress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ComputeSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ComputeSecurityGroup
+      Description: Allow all traffic between compute nodes
+      
+  ComputeSecurityGroupIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ComputeSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref BastionSecurityGroup
+      Description: Allow all traffic from bastion to compute nodes
+      
+  # Route53 Private Hosted Zone
+  HPCBurstingZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: hpc-demo.internal
+      VPCs:
+        - VPCId: !Ref VpcId
+          VPCRegion: !Ref "AWS::Region"
+      HostedZoneConfig:
+        Comment: Private zone for HPC Bursting Demo
+        
+  # Route53 Records
+  ControllerRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HPCBurstingZone
+      Name: controller.hpc-demo.internal
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !Ref LocalHpcIp
+        
+  NFSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HPCBurstingZone
+      Name: nfs.hpc-demo.internal
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !Ref LocalHpcIp
+        
+  LDAPRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HPCBurstingZone
+      Name: ldap.hpc-demo.internal
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !Ref LocalHpcIp
+        
+  # Launch Templates
+  CPULaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: hpc-demo-compute-cpu
+      VersionDescription: Initial version
+      LaunchTemplateData:
+        InstanceType: !If [IsX86, c5.large, c6g.large]
+        ImageId: !If [IsX86, !Ref X86CPUAMI, !Ref ARM64CPUAMI]
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+          - !Ref ComputeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref ComputeNodeInstanceProfile
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: hpc-demo-compute
+              - Key: Project
+                Value: HPC-Bursting-Demo
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # This is handled by the slurm-node-startup service
+            exit 0
+            
+  GPULaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Condition: CreateGPUResources
+    Properties:
+      LaunchTemplateName: hpc-demo-compute-gpu
+      VersionDescription: Initial version
+      LaunchTemplateData:
+        InstanceType: !If [IsX86, g4dn.xlarge, g5g.xlarge]
+        ImageId: !If [IsX86, !Ref X86GPUAMI, !Ref ARM64GPUAMI]
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+          - !Ref ComputeSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref ComputeNodeInstanceProfile
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: hpc-demo-compute-gpu
+              - Key: Project
+                Value: HPC-Bursting-Demo
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # This is handled by the slurm-node-startup service
+            exit 0
+            
+  # Instance Profile for Compute Nodes
+  ComputeNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ComputeNodeRole
+        
+  # Bastion Host
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !If [IsX86, t3.micro, t4g.micro]
+      ImageId: !If [IsX86, !Ref X86RockyAMI, !Ref ARM64RockyAMI]
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      KeyName: !Ref KeyPairName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Update system
+          dnf update -y
+
+          # Install WireGuard
+          dnf install -y wireguard-tools
+
+          # Configure WireGuard
+          cd /etc/wireguard
+          umask 077
+          wg genkey | tee privatekey | wg pubkey > publickey
+
+          # Get the keys
+          PRIVATE_KEY=$(cat privatekey)
+          PUBLIC_KEY=$(cat publickey)
+
+          # Create WireGuard configuration
+          cat << WGEOF > /etc/wireguard/wg0.conf
+          [Interface]
+          PrivateKey = $PRIVATE_KEY
+          Address = 10.0.0.2/24
+          ListenPort = 51820
+          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+          [Peer]
+          PublicKey = ${WireguardPublicKey}
+          AllowedIPs = ${LocalHpcIp}/32, 10.0.0.0/24
+          WGEOF
+
+          # Enable IP forwarding
+          echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+          sysctl -p
+
+          # Enable and start WireGuard
+          systemctl enable --now wg-quick@wg0
+
+          # Add route for local network
+          ip route add ${LocalHpcIp}/32 dev wg0
+
+          # Create a script to output configuration info
+          cat << SCRIPT > /home/rocky/wireguard-info.sh
+          #!/bin/bash
+          echo "WireGuard Public Key: $(cat /etc/wireguard/publickey)"
+          echo "WireGuard IP: 10.0.0.2"
+          echo "WireGuard Port: 51820"
+          echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+          SCRIPT
+
+          chmod +x /home/rocky/wireguard-info.sh
+      Tags:
+        - Key: Name
+          Value: hpc-demo-bastion
+        - Key: Project
+          Value: HPC-Bursting-Demo
+          
+  # Custom Route in Private Route Table
+  PrivateRouteToHPC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 10.0.0.0/24
+      InstanceId: !Ref BastionHost
+  
+  # Private Route Table (created if not provided)
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: hpc-demo-private-rtb
+  
+  # Route Table Association to Private Subnet
+  PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet
+        
+Conditions:
+  IsX86: !Equals [!Ref Architecture, x86_64]
+  CreateGPUResources: !Or [
+    !And [!Equals [!Ref Architecture, x86_64], !Not [!Equals [!Ref X86GPUAMI, ""]]],
+    !And [!Equals [!Ref Architecture, arm64], !Not [!Equals [!Ref ARM64GPUAMI, ""]]]
+  ]
+  
+Mappings:
+  RegionAMIs:
+    us-east-1:
+      X86Rocky: ami-0d7e4ab37e8517de2
+      ARM64Rocky: ami-0d7e4ab37e8517de2
+      X86CPU: ami-0d7e4ab37e8517de2
+      ARM64CPU: ami-0d7e4ab37e8517de2
+      X86GPU: ami-0d7e4ab37e8517de2
+      ARM64GPU: ami-0d7e4ab37e8517de2
+  
+Outputs:
+  BastionHostId:
+    Description: Instance ID of bastion host
+    Value: !Ref BastionHost
+    
+  BastionPublicIP:
+    Description: Public IP address of bastion host
+    Value: !GetAtt BastionHost.PublicIp
+    
+  PrivateSubnetId:
+    Description: Private subnet ID for compute nodes
+    Value: !Ref PrivateSubnet
+    
+  ComputeSecurityGroupId:
+    Description: Security group ID for compute nodes
+    Value: !Ref ComputeSecurityGroup
+    
+  HostedZoneId:
+    Description: Route53 hosted zone ID
+    Value: !Ref HPCBurstingZone
+    
+  CPULaunchTemplateId:
+    Description: Launch template ID for CPU instances
+    Value: !Ref CPULaunchTemplate
+    
+  GPULaunchTemplateId:
+    Description: Launch template ID for GPU instances
+    Value: !If [CreateGPUResources, !Ref GPULaunchTemplate, "n/a"]

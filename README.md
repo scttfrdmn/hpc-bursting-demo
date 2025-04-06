@@ -103,6 +103,28 @@ graph TB
 
 See the [Installation Guide](docs/installation.md) for detailed setup instructions.
 
+## CloudFormation Deployment
+
+For AWS-native deployment, you can use the included CloudFormation template:
+
+1. Go to the AWS CloudFormation console
+2. Create a new stack using the template in `cloudformation/hpc-bursting-infrastructure.yaml`
+3. Fill in the required parameters:
+   - VPC ID and subnet IDs
+   - WireGuard public key from your local HPC system
+   - Architecture (x86_64 or arm64)
+   - Local HPC IP address
+
+After the stack is created, note the output values and update your local configuration with:
+- Bastion public IP
+- Security group ID
+- Launch template IDs
+
+For a complete automated setup, you can run the following from your local HPC system:
+```bash
+./scripts/aws/update_config_from_cloudformation.sh YOUR_STACK_NAME
+```
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details. 
