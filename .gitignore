@@ -1,0 +1,17 @@
+# AWS credentials
+slurm-aws-credentials.json
+aws-resources.txt
+*.pem
+
+# Logs
+*.log
+*.out
+
+# Configuration backups
+*.bak
+*.old
+
+# Temporary files
+*.tmp
+*~
+.DS_Store
