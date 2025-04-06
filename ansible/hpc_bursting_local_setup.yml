@@ -1,0 +1,888 @@
+---
+# hpc_bursting_local_setup.yml
+- name: Setup HPC Bursting Local System
+  hosts: hpc_local
+  become: yes
+  vars:
+    hostname: hpc-local.demo.local
+    ldap_admin_password: ldapadminpassword
+    mysql_slurm_password: slurm123
+    wireguard_port: 51820
+    aws_region: us-west-2
+    subnet_id: "{{ private_subnet_id | default('subnet-example') }}"
+    compute_sg_id: "{{ compute_security_group_id | default('sg-example') }}"
+
+  tasks:
+    - name: Update all packages
+      dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Install common utilities
+      dnf:
+        name:
+          - vim
+          - wget
+          - curl
+          - git
+          - tar
+          - zip
+          - unzip
+          - bind-utils
+          - net-tools
+          - tcpdump
+          - jq
+        state: present
+
+    - name: Set hostname
+      hostname:
+        name: "{{ hostname }}"
+
+    - name: Update /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ hostname }} hpc-local"
+
+    # NFS SERVER SETUP
+    - name: Install NFS server
+      dnf:
+        name: nfs-utils
+        state: present
+
+    - name: Create NFS export directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: '/export', mode: '0755' }
+        - { path: '/export/home', mode: '0755' }
+        - { path: '/export/apps', mode: '0755' }
+        - { path: '/export/scratch', mode: '0777' }
+        - { path: '/export/slurm', mode: '0755' }
+        - { path: '/export/logs', mode: '0755' }
+
+    - name: Configure NFS exports
+      copy:
+        dest: /etc/exports
+        content: |
+          /export/home    *(rw,sync,no_root_squash)
+          /export/apps    *(rw,sync,no_root_squash)
+          /export/scratch *(rw,sync,no_root_squash)
+          /export/slurm   *(rw,sync,no_root_squash)
+          /export/logs    *(rw,sync,no_root_squash)
+
+    - name: Start and enable NFS services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - rpcbind
+        - nfs-server
+
+    - name: Export NFS shares
+      command: exportfs -a
+
+    # 389 DIRECTORY SERVER SETUP
+    - name: Install 389 Directory Server
+      dnf:
+        name: 389-ds-base
+        state: present
+
+    - name: Create ds setup file
+      copy:
+        dest: /tmp/dssetup.inf
+        content: |
+          [general]
+          config_version = 2
+
+          [slapd]
+          root_password = {{ ldap_admin_password }}
+          instance_name = demo
+          serverid = 1
+
+          [backend-userroot]
+          suffix = dc=demo,dc=local
+          sample_entries = yes
+
+    - name: Create 389-ds instance
+      command: dscreate from-file /tmp/dssetup.inf
+      args:
+        creates: /etc/dirsrv/slapd-demo
+
+    - name: Wait for DS to start
+      wait_for:
+        timeout: 10
+
+    - name: Create test user LDIF
+      copy:
+        dest: /tmp/testuser.ldif
+        content: |
+          dn: uid=testuser,ou=People,dc=demo,dc=local
+          objectClass: top
+          objectClass: person
+          objectClass: organizationalPerson
+          objectClass: inetOrgPerson
+          objectClass: posixAccount
+          objectClass: shadowAccount
+          cn: Test User
+          sn: User
+          uid: testuser
+          uidNumber: 10000
+          gidNumber: 10000
+          homeDirectory: /home/testuser
+          loginShell: /bin/bash
+          userPassword: {SSHA}aaQRtbKGXEAWRAm+HS8UtV9a4tBZcbq0TvLgVg==
+
+          dn: cn=hpcusers,ou=Groups,dc=demo,dc=local
+          objectClass: top
+          objectClass: posixGroup
+          cn: hpcusers
+          gidNumber: 10000
+          memberUid: testuser
+
+    - name: Add test user to LDAP
+      command: ldapadd -x -D "cn=Directory Manager" -w {{ ldap_admin_password }} -f /tmp/testuser.ldif
+      register: ldapadd_result
+      failed_when: ldapadd_result.rc != 0 and "Already exists" not in ldapadd_result.stderr
+
+    # SSSD SETUP
+    - name: Install SSSD packages
+      dnf:
+        name:
+          - sssd
+          - sssd-ldap
+          - oddjob-mkhomedir
+        state: present
+
+    - name: Configure SSSD
+      copy:
+        dest: /etc/sssd/sssd.conf
+        content: |
+          [sssd]
+          domains = demo.local
+          config_file_version = 2
+          services = nss, pam
+
+          [domain/demo.local]
+          id_provider = ldap
+          auth_provider = ldap
+          ldap_uri = ldap://localhost
+          ldap_search_base = dc=demo,dc=local
+          ldap_user_search_base = ou=People,dc=demo,dc=local
+          ldap_group_search_base = ou=Groups,dc=demo,dc=local
+          ldap_default_bind_dn = cn=Directory Manager
+          ldap_default_authtok = {{ ldap_admin_password }}
+          ldap_id_use_start_tls = False
+          ldap_tls_reqcert = never
+          enumerate = True
+          cache_credentials = True
+
+          # Schema mappings
+          ldap_user_object_class = posixAccount
+          ldap_user_name = uid
+          ldap_user_uid_number = uidNumber
+          ldap_user_gid_number = gidNumber
+          ldap_user_home_directory = homeDirectory
+          ldap_user_shell = loginShell
+
+          ldap_group_object_class = posixGroup
+          ldap_group_name = cn
+          ldap_group_gid_number = gidNumber
+          ldap_group_member = memberUid
+        mode: '0600'
+
+    - name: Configure authentication with authselect
+      command: authselect select sssd with-mkhomedir --force
+
+    - name: Create test user home directory
+      file:
+        path: /export/home/testuser
+        state: directory
+        owner: 10000
+        group: 10000
+        mode: '0700'
+
+    - name: Clear SSSD cache
+      file:
+        path: /var/lib/sss/db
+        state: absent
+
+    - name: Enable and start SSSD
+      systemd:
+        name: sssd
+        state: restarted
+        enabled: yes
+
+    # Configure rsyslog for centralized logging
+    - name: Create logging directory on NFS share
+      file:
+        path: /export/logs
+        state: directory
+        mode: '0755'
+
+    - name: Configure rsyslog on head node to receive logs
+      copy:
+        dest: /etc/rsyslog.d/remote.conf
+        content: |
+          # Define templates for remote logging
+          $template RemoteHost,"/export/logs/%HOSTNAME%/%PROGRAMNAME%.log"
+          $template SlurmJobEvents,"/export/logs/slurm/job_events.log"
+
+          # Create directories if they don't exist
+          $FileCreateMode 0644
+          $DirCreateMode 0755
+          $DirGroup adm
+          $FileGroup adm
+
+          # Forward slurm job events to a dedicated file
+          if $programname startswith 'slurm' and $msg contains 'job_complete' or $msg contains 'Allocate' then {
+              ?SlurmJobEvents
+              stop
+          }
+
+          # Store all other remote logs by hostname and program
+          :fromhost-ip, isequal, "10.1.1.0/24" ?RemoteHost
+          & stop
+        mode: '0644'
+
+    - name: Create log rotation configuration
+      copy:
+        dest: /etc/logrotate.d/hpc-cluster
+        content: |
+          /export/logs/*/*.log {
+              weekly
+              rotate 4
+              compress
+              missingok
+              notifempty
+              create 0644 root adm
+              sharedscripts
+              postrotate
+                  systemctl restart rsyslog
+              endscript
+          }
+        mode: '0644'
+
+    - name: Restart rsyslog
+      systemd:
+        name: rsyslog
+        state: restarted
+
+    # MARIADB SETUP
+    - name: Install MariaDB
+      dnf:
+        name: mariadb-server
+        state: present
+
+    - name: Start and enable MariaDB
+      systemd:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Create Slurm database
+      mysql_db:
+        name: slurm_acct_db
+        state: present
+
+    - name: Create Slurm database user
+      mysql_user:
+        name: slurm
+        password: "{{ mysql_slurm_password }}"
+        priv: 'slurm_acct_db.*:ALL'
+        host: localhost
+        state: present
+
+    # MUNGE SETUP
+    - name: Install Munge
+      dnf:
+        name:
+          - munge
+          - munge-libs
+          - munge-devel
+        state: present
+
+    - name: Create munge override directory
+      file:
+        path: /etc/systemd/system/munge.service.d
+        state: directory
+
+    - name: Configure munge service override
+      copy:
+        dest: /etc/systemd/system/munge.service.d/override.conf
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=/usr/sbin/munged --key-file=/export/slurm/munge.key
+
+    - name: Generate munge key
+      command: dd if=/dev/urandom bs=1 count=1024 of=/tmp/munge.key
+      args:
+        creates: /tmp/munge.key
+
+    - name: Move munge key to shared location
+      copy:
+        src: /tmp/munge.key
+        dest: /export/slurm/munge.key
+        remote_src: yes
+        owner: munge
+        group: munge
+        mode: '0400'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable munge
+      systemd:
+        name: munge
+        state: started
+        enabled: yes
+
+    # SLURM SETUP
+    - name: Enable CRB repository
+      command: dnf config-manager --set-enabled crb
+
+    - name: Install EPEL
+      dnf:
+        name: epel-release
+        state: present
+
+    - name: Install Slurm packages
+      dnf:
+        name:
+          - slurm
+          - slurm-devel
+          - slurm-perlapi
+          - slurm-slurmctld
+          - slurm-slurmd
+          - slurm-slurmdbd
+        state: present
+
+    - name: Create Slurm directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: slurm
+        group: slurm
+        mode: "0750"
+      loop:
+        - /var/spool/slurm
+        - /var/log/slurm
+
+    - name: Create slurmdbd.conf
+      copy:
+        dest: /etc/slurm/slurmdbd.conf
+        content: |
+          AuthType=auth/munge
+          DbdHost=localhost
+          DbdPort=6819
+          SlurmUser=slurm
+          DebugLevel=4
+          LogFile=/var/log/slurm/slurmdbd.log
+          PidFile=/var/run/slurmdbd.pid
+          StorageType=accounting_storage/mysql
+          StorageHost=localhost
+          StorageUser=slurm
+          StoragePass={{ mysql_slurm_password }}
+          StorageLoc=slurm_acct_db
+        owner: slurm
+        group: slurm
+        mode: '0600'
+
+    - name: Create slurm.conf
+      copy:
+        dest: /etc/slurm/slurm.conf
+        content: |
+          # General Slurm configuration
+          ClusterName=demo-cluster
+          SlurmctldHost=controller.hpc-demo.internal
+
+          # Authentication and security
+          AuthType=auth/munge
+          CryptoType=crypto/munge
+          MpiDefault=pmix
+
+          # Process tracking and accounting
+          ProctrackType=proctrack/linuxproc
+          AccountingStorageType=accounting_storage/slurmdbd
+          AccountingStorageHost=controller.hpc-demo.internal
+          JobAcctGatherType=jobacct_gather/linux
+
+          # Debugging options
+          SlurmctldDebug=info
+          SlurmctldLogFile=/var/log/slurm/slurmctld.log
+          SlurmdDebug=info
+          SlurmdLogFile=/var/log/slurm/slurmd.log
+
+          # Scheduling
+          SchedulerType=sched/backfill
+          SelectType=select/cons_tres
+          SelectTypeParameters=CR_Core
+
+          # Node configuration (local)
+          NodeName=hpc-local CPUs=2 RealMemory=2000 State=UNKNOWN
+          PartitionName=local Nodes=hpc-local Default=YES MaxTime=INFINITE State=UP
+
+          # Include AWS nodes definition (will be appended later)
+        mode: '0644'
+
+    - name: Add entries to /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "10.0.0.1 controller.hpc-demo.internal nfs.hpc-demo.internal ldap.hpc-demo.internal"
+
+    # Start slurm services
+    - name: Start and enable Slurm services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - slurmdbd
+        - slurmctld
+        - slurmd
+
+    # Configure Slurm accounting
+    - name: Configure Slurm accounting
+      command: "{{ item }}"
+      loop:
+        - sacctmgr -i add cluster demo-cluster
+        - sacctmgr -i add account demo-account description="Demo Account" organization="Demo Org"
+        - sacctmgr -i add user slurm account=demo-account adminlevel=Admin
+        - sacctmgr -i add qos normal
+        - sacctmgr -i add qos cloud GraceTime=120 MaxTRESPerUser=cpu=48 MaxJobsPerUser=8 MaxWall=24:00:00
+      ignore_errors: yes
+
+    # WIREGUARD SETUP
+    - name: Install WireGuard
+      dnf:
+        name: wireguard-tools
+        state: present
+
+    - name: Create WireGuard directory
+      file:
+        path: /etc/wireguard
+        state: directory
+        mode: '0700'
+
+    - name: Generate WireGuard private key
+      shell: umask 077 && wg genkey > /etc/wireguard/privatekey
+      args:
+        creates: /etc/wireguard/privatekey
+
+    - name: Generate WireGuard public key
+      shell: cat /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
+      args:
+        creates: /etc/wireguard/publickey
+
+    - name: Get WireGuard private key
+      slurp:
+        src: /etc/wireguard/privatekey
+      register: wg_private_key
+
+    - name: Create WireGuard configuration
+      copy:
+        dest: /etc/wireguard/wg0.conf
+        content: |
+          [Interface]
+          PrivateKey = {{ wg_private_key.content | b64decode | trim }}
+          Address = 10.0.0.1/24
+          ListenPort = {{ wireguard_port }}
+
+          # AWS Bastion will be added later
+        mode: '0600'
+
+    - name: Enable IP forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        state: present
+        sysctl_file: /etc/sysctl.conf
+        reload: yes
+
+    - name: Configure firewall for services
+      firewalld:
+        port: "{{ item.port }}"
+        permanent: yes
+        state: enabled
+      loop:
+        - { port: "51820/udp" }
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Configure firewall for services
+      firewalld:
+        service: "{{ item.service }}"
+        permanent: yes
+        state: enabled
+      loop:
+        - { service: "nfs" }
+        - { service: "ldap" }
+        - { service: "mysql" }
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Reload firewall
+      command: firewall-cmd --reload
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Create WireGuard monitor script
+      copy:
+        dest: /usr/local/sbin/wireguard-monitor.sh
+        content: |
+          #!/bin/bash
+          # Monitor and maintain WireGuard connection
+
+          # Get bastion IP from configuration
+          BASTION_IP=$(grep "Endpoint" /etc/wireguard/wg0.conf | cut -d':' -f1 | cut -d' ' -f3)
+          WG_INTERFACE="wg0"
+          PING_COUNT=3
+          LOG_FILE="/var/log/wireguard-monitor.log"
+
+          # Check if bastion IP is configured
+          if [ -z "$BASTION_IP" ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Bastion IP not yet configured in WireGuard config" >> $LOG_FILE
+            exit 0
+          fi
+
+          # Log function
+          log() {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> $LOG_FILE
+          }
+
+          # Check if interface exists
+          if ! ip link show $WG_INTERFACE &>/dev/null; then
+            log "WireGuard interface $WG_INTERFACE does not exist, starting..."
+            systemctl start wg-quick@$WG_INTERFACE
+            sleep 5
+          fi
+
+          # Check if interface is up
+          if ! ip link show $WG_INTERFACE | grep -q "UP"; then
+            log "WireGuard interface $WG_INTERFACE is down, bringing up..."
+            ip link set $WG_INTERFACE up
+            sleep 2
+          fi
+
+          # Check if we can ping the bastion
+          if ! ping -c $PING_COUNT -W 2 $BASTION_IP &>/dev/null; then
+            log "Cannot ping bastion ($BASTION_IP), restarting WireGuard..."
+            systemctl restart wg-quick@$WG_INTERFACE
+            sleep 5
+            
+            # Check if restart fixed the issue
+            if ping -c $PING_COUNT -W 2 $BASTION_IP &>/dev/null; then
+              log "WireGuard connection restored"
+            else
+              log "WireGuard connection still down after restart"
+            fi
+          else
+            # Check if we can ping through to private subnet
+            if ! ping -c $PING_COUNT -W 2 10.1.1.1 &>/dev/null; then
+              log "Cannot ping private subnet, checking routes..."
+              
+              # Check if route exists
+              if ! ip route | grep -q "10.1.1.0/24"; then
+                log "Adding route to private subnet..."
+                ip route add 10.1.1.0/24 via $BASTION_IP dev $WG_INTERFACE
+              fi
+            fi
+          fi
+        mode: '0755'
+
+    - name: Add WireGuard monitor to crontab
+      cron:
+        name: "monitor_wireguard"
+        job: "/usr/local/sbin/wireguard-monitor.sh"
+        minute: "*/5"
+
+    # AWS CLI SETUP
+    - name: Download AWS CLI
+      get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+        dest: /tmp/awscliv2.zip
+
+    - name: Create temporary directory for AWS CLI
+      file:
+        path: /tmp/aws_cli
+        state: directory
+
+    - name: Extract AWS CLI
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp/aws_cli
+        remote_src: yes
+
+    - name: Install AWS CLI
+      command: /tmp/aws_cli/aws/install
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: Install Python dependencies for AWS plugin
+      pip:
+        name:
+          - boto3
+          - botocore
+
+    # AWS SLURM PLUGIN V2 SETUP
+    - name: Create AWS plugin directory
+      file:
+        path: /etc/slurm/aws
+        state: directory
+        mode: '0755'
+
+    - name: Download AWS Plugin for Slurm v2
+      git:
+        repo: https://github.com/aws-samples/aws-plugin-for-slurm.git
+        dest: /tmp/aws-plugin-for-slurm
+        version: plugin-v2
+      
+    - name: Copy plugin scripts to Slurm directory
+      copy:
+        src: "/tmp/aws-plugin-for-slurm/{{ item }}"
+        dest: /etc/slurm/aws/
+        remote_src: yes
+        mode: 0755
+      with_items:
+        - common.py
+        - resume.py
+        - suspend.py
+        - change_state.py
+        - generate_conf.py
+
+    - name: Create plugin config.json
+      copy:
+        dest: /etc/slurm/aws/config.json
+        content: |
+          {
+             "LogLevel": "INFO",
+             "LogFileName": "/var/log/slurm/aws_plugin.log",
+             "SlurmBinPath": "/usr/bin",
+             "SlurmConf": {
+                "PrivateData": "CLOUD",
+                "ResumeProgram": "/etc/slurm/aws/resume.py",
+                "SuspendProgram": "/etc/slurm/aws/suspend.py",
+                "ResumeRate": 100,
+                "SuspendRate": 100,
+                "ResumeTimeout": 300,
+                "SuspendTime": 350,
+                "TreeWidth": 60000
+             }
+          }
+        mode: '0644'
+
+    - name: Create plugin partitions.json
+      template:
+        dest: /etc/slurm/aws/partitions.json
+        content: |
+          {
+             "Partitions": [
+                {
+                   "PartitionName": "cloud",
+                   "NodeGroups": [
+                      {
+                         "NodeGroupName": "cpu",
+                         "MaxNodes": 20,
+                         "Region": "{{ aws_region }}",
+                         "SlurmSpecifications": {
+                            "CPUs": "2",
+                            "RealMemory": "3500",
+                            "Weight": "1"
+                         },
+                         "PurchasingOption": "on-demand",
+                         "OnDemandOptions": {
+                             "AllocationStrategy": "lowest-price"
+                         },
+                         "LaunchTemplateSpecification": {
+                            "LaunchTemplateName": "hpc-demo-compute-cpu",
+                            "Version": "$Latest"
+                         },
+                         "LaunchTemplateOverrides": [
+                            {% if ansible_architecture == "x86_64" %}
+                            {
+                               "InstanceType": "c5.large"
+                            },
+                            {
+                               "InstanceType": "c5.xlarge"
+                            }
+                            {% else %}
+                            {
+                               "InstanceType": "c6g.large"
+                            },
+                            {
+                               "InstanceType": "c6g.xlarge"
+                            }
+                            {% endif %}
+                         ],
+                         "SubnetIds": [
+                            "{{ subnet_id }}"
+                         ],
+                         "Tags": [
+                            {
+                               "Key": "Project",
+                               "Value": "HPC-Bursting-Demo"
+                            }
+                         ]
+                      }
+                      {% if gpu_launch_template_id is defined and gpu_launch_template_id != "n/a" %}
+                      ,
+                      {
+                         "NodeGroupName": "gpu",
+                         "MaxNodes": 10,
+                         "Region": "{{ aws_region }}",
+                         "SlurmSpecifications": {
+                            "CPUs": "4",
+                            "RealMemory": "16000",
+                            "Features": "gpu",
+                            {% if ansible_architecture == "x86_64" %}
+                            "Gres": "gpu:1",
+                            {% endif %}
+                            "Weight": "10"
+                         },
+                         "PurchasingOption": "on-demand",
+                         "OnDemandOptions": {
+                             "AllocationStrategy": "lowest-price"
+                         },
+                         "LaunchTemplateSpecification": {
+                            "LaunchTemplateName": "hpc-demo-compute-gpu",
+                            "Version": "$Latest"
+                         },
+                         "LaunchTemplateOverrides": [
+                            {% if ansible_architecture == "x86_64" %}
+                            {
+                               "InstanceType": "g4dn.xlarge"
+                            },
+                            {
+                               "InstanceType": "g4dn.2xlarge"
+                            }
+                            {% else %}
+                            {
+                               "InstanceType": "g5g.xlarge"
+                            },
+                            {
+                               "InstanceType": "g5g.2xlarge"
+                            }
+                            {% endif %}
+                         ],
+                         "SubnetIds": [
+                            "{{ subnet_id }}"
+                         ],
+                         "Tags": [
+                            {
+                               "Key": "Project",
+                               "Value": "HPC-Bursting-Demo"
+                            }
+                         ]
+                      }
+                      {% endif %}
+                      {% if ansible_architecture == "x86_64" and inferentia_launch_template_id is defined and inferentia_launch_template_id != "n/a" %}
+                      ,
+                      {
+                         "NodeGroupName": "inferentia",
+                         "MaxNodes": 5,
+                         "Region": "{{ aws_region }}",
+                         "SlurmSpecifications": {
+                            "CPUs": "4",
+                            "RealMemory": "8000",
+                            "Features": "inferentia",
+                            "Gres": "inferentia:1", 
+                            "Weight": "20"
+                         },
+                         "PurchasingOption": "on-demand",
+                         "OnDemandOptions": {
+                             "AllocationStrategy": "lowest-price"
+                         },
+                         "LaunchTemplateSpecification": {
+                            "LaunchTemplateName": "hpc-demo-compute-inferentia",
+                            "Version": "$Latest"
+                         },
+                         "LaunchTemplateOverrides": [
+                            {
+                               "InstanceType": "inf1.xlarge"
+                            }
+                         ],
+                         "SubnetIds": [
+                            "{{ subnet_id }}"
+                         ],
+                         "Tags": [
+                            {
+                               "Key": "Project",
+                               "Value": "HPC-Bursting-Demo"
+                            }
+                         ]
+                      }
+                      {% endif %}
+                      {% if ansible_architecture == "x86_64" and trainium_launch_template_id is defined and trainium_launch_template_id != "n/a" %}
+                      ,
+                      {
+                         "NodeGroupName": "trainium",
+                         "MaxNodes": 5,
+                         "Region": "{{ aws_region }}",
+                         "SlurmSpecifications": {
+                            "CPUs": "8",
+                            "RealMemory": "32000",
+                            "Features": "trainium",
+                            "Gres": "trainium:1",
+                            "Weight": "30"
+                         },
+                         "PurchasingOption": "on-demand",
+                         "OnDemandOptions": {
+                             "AllocationStrategy": "lowest-price"
+                         },
+                         "LaunchTemplateSpecification": {
+                            "LaunchTemplateName": "hpc-demo-compute-trainium",
+                            "Version": "$Latest"
+                         },
+                         "LaunchTemplateOverrides": [
+                            {
+                               "InstanceType": "trn1.2xlarge"
+                            }
+                         ],
+                         "SubnetIds": [
+                            "{{ subnet_id }}"
+                         ],
+                         "Tags": [
+                            {
+                               "Key": "Project",
+                               "Value": "HPC-Bursting-Demo"
+                            }
+                         ]
+                      }
+                      {% endif %}
+                   ],
+                   "PartitionOptions": {
+                      "Default": "No",
+                      "MaxTime": "INFINITE",
+                      "State": "UP"
+                   }
+                }
+             ]
+          }
+        mode: '0644'
+
+    - name: Generate Slurm configuration from plugin
+      command: 
+        chdir: /etc/slurm/aws
+        cmd: ./generate_conf.py
+
+    - name: Include generated AWS configuration in slurm.conf
+      shell: cat /etc/slurm/aws/slurm.conf.aws >> /etc/slurm/slurm.conf
+
+    - name: Copy updated Slurm configuration to shared location
+      copy:
+        src: /etc/slurm/slurm.conf
+        dest: /export/slurm/
+        remote_src: yes
+
+    - name: Setup cron job for change_state.py
+      cron:
+        name: "AWS plugin change_state"
+        minute: "*"
+        job: "/etc/slurm/aws/change_state.py &>/dev/null"
+
+    - name: Restart Slurm controller
+      systemd:
+        name: slurmctld
+        state: restarted
