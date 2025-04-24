@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Scott Friedman
+#
 # Test HPC bursting to AWS
 set -e
 
@@ -71,3 +74,27 @@ sinfo
 
 log "Test completed. Check 'test_cloud_*.out' after the job completes to see the output from the AWS cloud node."
 log "Note: The cloud job may take several minutes to start as AWS instances are being provisioned."
+
+# Provide cleanup information
+cat << EOT
+
+=================================================================
+                  IMPORTANT CLEANUP INFORMATION
+=================================================================
+
+Your test job will create AWS resources that COST MONEY.
+After your job completes (check with 'squeue' and 'sinfo'), 
+instances should be terminated automatically based on SuspendTime.
+
+To monitor AWS costs:
+  ./monitor-aws-costs.sh
+
+When you're done testing, clean up ALL AWS resources with:
+  cd aws
+  ./cleanup_aws_resources.sh
+
+For troubleshooting resource cleanup, see:
+  ../docs/troubleshooting.md
+=================================================================
+
+EOT
