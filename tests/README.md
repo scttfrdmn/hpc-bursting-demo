@@ -11,23 +11,52 @@ The testing framework is built using:
 
 ## Prerequisites
 
-To run the tests, you need to have BATS installed. You can install it using one of the following methods:
+To run the tests and linting, you need to have the following tools installed:
 
-### MacOS
+### 1. BATS (Bash Automated Testing System)
+
+#### MacOS
 ```bash
 brew install bats-core
 ```
 
-### Linux (Ubuntu/Debian)
+#### Linux (Ubuntu/Debian)
 ```bash
 sudo apt-get install bats
 ```
 
-### From Source
+#### From Source
 ```bash
 git clone https://github.com/bats-core/bats-core.git
 cd bats-core
 ./install.sh /usr/local
+```
+
+### 2. ShellCheck (for script linting)
+
+#### MacOS
+```bash
+brew install shellcheck
+```
+
+#### Linux (Ubuntu/Debian)
+```bash
+sudo apt-get install shellcheck
+```
+
+#### From Source or Other Platforms
+See [ShellCheck Installation Guide](https://github.com/koalaman/shellcheck#installing)
+
+### Verifying Installation
+
+You can verify that both tools are installed correctly by running:
+
+```bash
+# Check BATS version
+bats --version
+
+# Check ShellCheck version
+shellcheck --version
 ```
 
 ## Running Tests

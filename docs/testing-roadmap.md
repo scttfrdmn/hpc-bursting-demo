@@ -18,16 +18,25 @@ The testing approach follows a progressive implementation with multiple layers:
 
 ### Phase 1: Script-Level Testing (Current Focus)
 
+- **Required Tools Installation**
+  - [x] BATS (Bash Automated Testing System) - For running shell script unit tests
+  - [x] ShellCheck - For static analysis and script linting
+  - [ ] Add installation instructions to documentation (completed in [tests/README.md](../tests/README.md))
+
 - **Shell Script Unit Tests**
   - [x] Set up BATS (Bash Automated Testing System) framework
-  - [ ] Create unit tests for utility functions in shell scripts
+  - [x] Create unit tests for AWS resource cleanup script
+  - [x] Create unit tests for cost monitoring script
+  - [ ] Create unit tests for remaining utility functions
   - [ ] Test argument parsing and option handling
   - [ ] Test error handling and edge cases
   - [ ] Validate output formats and exit codes
 
 - **Static Analysis**
-  - [ ] Integrate ShellCheck for script validation
+  - [x] Integrate ShellCheck for script validation
+  - [x] Document common issues and fixes in [linting-improvements.md](linting-improvements.md)
   - [ ] Define and enforce style guidelines
+  - [ ] Fix identified linting issues in all scripts
   - [ ] Add pre-commit hooks for automated checking
 
 ### Phase 2: Mock AWS Testing

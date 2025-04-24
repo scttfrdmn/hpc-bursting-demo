@@ -30,10 +30,13 @@ To set up your development environment:
 
 1. Fork the repository and clone it to your local machine
 2. Install required dependencies:
-   - AWS CLI
-   - Bash 4.0 or higher
-   - ShellCheck (for linting)
-   - BATS (for testing)
+   - AWS CLI (required for deployment)
+   - Bash 4.0 or higher (required for all scripts)
+   - Testing tools (required for development and contribution):
+     - [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System)
+     - [ShellCheck](https://github.com/koalaman/shellcheck) (for shell script linting)
+
+For detailed instructions on installing the testing tools, refer to the [tests/README.md](tests/README.md) file in the repository.
 
 ## Testing
 
