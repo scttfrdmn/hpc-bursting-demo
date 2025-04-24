@@ -309,3 +309,205 @@ EOF
   [[ "$output" == *"INFERENTIA_AMI_ID=ami-inferentia12345"* ]]
   [[ "$output" == *"TRAINIUM_AMI_ID=ami-trainium12345"* ]]
 }
+
+# Test test mode functionality (--test-mode flag)
+@test "AMI creation script in test mode uses mock AWS resources" {
+  # Create a test script with test mode
+  cat > "$BATS_TEST_TMPDIR/test_test_mode.sh" << 'EOF'
+#!/bin/bash
+set -e
+
+# Change to the temporary directory
+cd "$BATS_TEST_TMPDIR/scripts"
+
+# Default options
+CREATE_CPU_AMI=true
+CREATE_GPU_AMI=false
+TEST_MODE=false
+USE_DEMO_INSTANCES=false
+USE_INTERACTIVE=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --gpu)
+      CREATE_GPU_AMI=true
+      shift
+      ;;
+    --test-mode)
+      TEST_MODE=true
+      USE_DEMO_INSTANCES=true  # Test mode defaults to demo instances
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Source aws-resources.txt
+source aws-resources.txt
+
+# Check if running in test mode with LocalStack
+if [ "${TEST_MODE:-false}" = "true" ]; then
+  # Set AWS endpoint URL for LocalStack
+  AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+  echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+fi
+
+# Helper function for AWS CLI commands with optional LocalStack endpoint
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    echo "Mock AWS command with endpoint: $AWS_ENDPOINT_URL"
+    echo "Arguments: $@"
+    return 0
+  else
+    echo "Real AWS command"
+    echo "Arguments: $@"
+    return 0
+  fi
+}
+
+# Create function to build AMIs
+create_ami() {
+  local instance_type=$1
+  local ami_suffix=$2
+  
+  echo "Creating $ami_suffix AMI using $instance_type instance..."
+  
+  # For test mode, use mock AMI IDs
+  if [ "$TEST_MODE" = "true" ]; then
+    # Use mock AMI IDs for testing
+    echo "Test mode: Using mock AMI ID for $ami_suffix"
+    if [[ "$instance_type" == *"g"* ]]; then
+      AMI_ID="ami-$ami_suffix-gpu-mock-12345"
+    else
+      AMI_ID="ami-$ami_suffix-cpu-mock-12345"
+    fi
+    echo "Created mock AMI: $AMI_ID"
+    echo "$AMI_ID"
+    return 0
+  fi
+  
+  # Normal mode
+  AMI_ID="ami-$ami_suffix-real-12345"
+  echo "Created real AMI: $AMI_ID"
+  echo "$AMI_ID"
+}
+
+# Create the AMIs based on user selections
+echo "Creating CPU AMI..."
+CPU_AMI_ID=$(create_ami "t3.medium" "cpu")
+echo "CPU AMI ID: $CPU_AMI_ID"
+
+# Create GPU AMI if selected
+if [ "$CREATE_GPU_AMI" == "true" ]; then
+  echo "Creating GPU AMI..."
+  GPU_AMI_ID=$(create_ami "g4dn.xlarge" "gpu")
+  echo "GPU AMI ID: $GPU_AMI_ID"
+else
+  GPU_AMI_ID="n/a"
+fi
+
+# Save the original content
+original_content=$(cat aws-resources.txt)
+
+# Update aws-resources.txt
+cat > aws-resources.txt << RESOURCES
+$original_content
+CPU_AMI_ID=$CPU_AMI_ID
+GPU_AMI_ID=$GPU_AMI_ID
+RESOURCES
+
+echo "AMI creation completed successfully."
+EOF
+
+  chmod +x "$BATS_TEST_TMPDIR/test_test_mode.sh"
+  
+  # Need to create the aws-resources.txt file first
+  mkdir -p "$BATS_TEST_TMPDIR/scripts"
+  cat > "$BATS_TEST_TMPDIR/scripts/aws-resources.txt" << EOF
+AWS_REGION=us-west-2
+VPC_ID=vpc-12345678
+COMPUTE_SG_ID=sg-compute12345
+PRIVATE_SUBNET_ID=subnet-private12345
+EOF
+
+  # Run the test script with --test-mode flag
+  run "$BATS_TEST_TMPDIR/test_test_mode.sh" "--test-mode"
+  
+  # Verify the script ran successfully
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Running in TEST MODE"* ]]
+  [[ "$output" == *"Test mode: Using mock AMI ID for cpu"* ]]
+  [[ "$output" == *"Created mock AMI: ami-cpu-cpu-mock-12345"* ]]
+  [[ "$output" != *"Created real AMI"* ]]
+  
+  # Run a second test for GPU - need to recreate the resources file each time
+  mkdir -p "$BATS_TEST_TMPDIR/scripts"
+  cat > "$BATS_TEST_TMPDIR/scripts/aws-resources.txt" << EOF
+AWS_REGION=us-west-2
+VPC_ID=vpc-12345678
+COMPUTE_SG_ID=sg-compute12345
+PRIVATE_SUBNET_ID=subnet-private12345
+EOF
+  
+  # Run the test script with both flags
+  run bash -c "cd $BATS_TEST_TMPDIR && ./test_test_mode.sh --test-mode --gpu"
+  
+  # Verify the script ran successfully with both flags
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Running in TEST MODE"* ]]
+  [[ "$output" == *"Test mode: Using mock AMI ID for cpu"* ]]
+  [[ "$output" == *"Test mode: Using mock AMI ID for gpu"* ]]
+  [[ "$output" == *"Created mock AMI: ami-cpu-cpu-mock-12345"* ]]
+  [[ "$output" == *"Created mock AMI: ami-gpu-gpu-mock-12345"* ]]
+}
+
+# Test for aws_cmd utility function
+@test "aws_cmd utility function properly routes AWS CLI calls" {
+  # Create a test script for the aws_cmd function
+  cat > "$BATS_TEST_TMPDIR/test_aws_cmd.sh" << 'EOF'
+#!/bin/bash
+set -e
+
+# Mock AWS region
+AWS_REGION="us-west-2"
+
+# Function to test
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    echo "Using LocalStack endpoint: $AWS_ENDPOINT_URL"
+    echo "aws --endpoint-url=$AWS_ENDPOINT_URL $@"
+  else
+    echo "Using real AWS endpoint"
+    echo "aws $@"
+  fi
+}
+
+# Test 1: Normal mode
+echo "======= Normal Mode ======="
+TEST_MODE=false
+aws_cmd ec2 describe-instances --region $AWS_REGION
+
+# Test 2: Test mode
+echo "======= Test Mode ======="
+TEST_MODE=true
+AWS_ENDPOINT_URL="http://localhost:4566"
+aws_cmd ec2 describe-instances --region $AWS_REGION
+EOF
+
+  chmod +x "$BATS_TEST_TMPDIR/test_aws_cmd.sh"
+  
+  # Run the test script
+  run "$BATS_TEST_TMPDIR/test_aws_cmd.sh"
+  
+  # Verify the function works correctly
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"======= Normal Mode ======="* ]]
+  [[ "$output" == *"Using real AWS endpoint"* ]]
+  [[ "$output" == *"aws ec2 describe-instances --region us-west-2"* ]]
+  [[ "$output" == *"======= Test Mode ======="* ]]
+  [[ "$output" == *"Using LocalStack endpoint: http://localhost:4566"* ]]
+  [[ "$output" == *"aws --endpoint-url=http://localhost:4566 ec2 describe-instances --region us-west-2"* ]]
+}

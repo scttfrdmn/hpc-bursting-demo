@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  localstack:
+    container_name: hpc-bursting-localstack
+    image: localstack/localstack:latest
+    ports:
+      - "4566-4599:4566-4599"  # LocalStack edge ports
+    environment:
+      - SERVICES=ec2,iam,route53,cloudformation,s3,cloudwatch,logs,ce
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-west-2
+      - HOSTNAME_EXTERNAL=localstack
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
+    networks:
+      - localstack-network
+
+networks:
+  localstack-network:
+    driver: bridge
