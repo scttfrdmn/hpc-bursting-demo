@@ -57,13 +57,13 @@ The testing approach follows a progressive implementation with multiple layers:
   - [x] Create BATS tests for test mode functionality
   - [x] Add comprehensive tests for AWS service interactions
 
-### Phase 3: Containerized Testing
+### Phase 3: Containerized Testing (Current Focus)
 
 - **Docker-based Testing Environment**
-  - [ ] Create Docker containers for local HPC and mock AWS
-  - [ ] Set up Docker Compose configuration
-  - [ ] Define network simulation between containers
-  - [ ] Create automated test scenarios
+  - [x] Create Docker containers for local HPC and mock AWS
+  - [x] Set up Docker Compose configuration
+  - [x] Define network simulation between containers
+  - [x] Create automated test scenarios
   - [ ] Test full deployment in containerized environment
 
 ### Phase 4: CI/CD Pipeline Integration
@@ -101,7 +101,16 @@ The testing approach follows a progressive implementation with multiple layers:
 
 ## Current Progress
 
-We have completed Phase 1 (Script-Level Testing) and Phase 2 (Mock AWS Testing). We've implemented comprehensive script-level testing with BATS and set up LocalStack integration for AWS service emulation. All AWS scripts now support test mode, allowing us to test AWS interactions without creating actual resources. This provides a safe and cost-effective way to validate our infrastructure code. The next phase will be Phase 3: Containerized Testing, which will build on our LocalStack implementation to create a fully containerized testing environment.
+We have completed Phase 1 (Script-Level Testing) and Phase 2 (Mock AWS Testing), and are making excellent progress on Phase 3 (Containerized Testing). 
+
+For Phase 3, we've created a Docker-based testing environment with three containers:
+1. A controller node running the Slurm controller and NFS services
+2. A compute node connected to the controller
+3. A LocalStack container for AWS service emulation
+
+These containers are configured to create a complete simulation of the HPC bursting environment, with a dedicated network and shared storage volumes. We've created automated test scripts that verify the functionality of the Slurm configuration, NFS mounts, and AWS interactions. The only remaining task is to test the full deployment in this containerized environment.
+
+This comprehensive testing approach allows us to validate the entire HPC bursting workflow without requiring actual hardware or AWS resources, making it ideal for continuous integration and development.
 
 ## Testing Guidelines
 

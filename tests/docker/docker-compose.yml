@@ -1,0 +1,77 @@
+version: '3.8'
+
+networks:
+  hpc_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  # LocalStack container for AWS service emulation
+  localstack:
+    container_name: hpc-bursting-localstack
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"     # LocalStack edge port
+      - "4510-4559:4510-4559" # Additional service ports
+    environment:
+      - SERVICES=ec2,iam,route53,cloudformation,s3,cloudwatch,logs,ce
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_DEFAULT_REGION=us-west-2
+      - HOSTNAME_EXTERNAL=localstack
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "../localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
+    networks:
+      hpc_network:
+        ipv4_address: 172.28.0.10
+
+  # HPC Head Node (Controller)
+  hpc_controller:
+    container_name: hpc-controller
+    build:
+      context: .
+      dockerfile: controller.Dockerfile
+    volumes:
+      - "../../:/app"  # Mount project directory
+      - "shared_home:/home"
+      - "shared_apps:/apps"
+      - "shared_scratch:/scratch"
+    networks:
+      hpc_network:
+        ipv4_address: 172.28.0.2
+    ports:
+      - "10022:22"     # SSH access
+    environment:
+      - HPC_NODE_TYPE=controller
+      - MOCK_AWS_ENDPOINT=http://localstack:4566
+    depends_on:
+      - localstack
+
+  # HPC Compute Node
+  hpc_compute:
+    container_name: hpc-compute
+    build:
+      context: .
+      dockerfile: compute.Dockerfile
+    volumes:
+      - "shared_home:/home"
+      - "shared_apps:/apps"
+      - "shared_scratch:/scratch"
+    networks:
+      hpc_network:
+        ipv4_address: 172.28.0.3
+    environment:
+      - HPC_NODE_TYPE=compute
+      - CONTROLLER_IP=172.28.0.2
+    depends_on:
+      - hpc_controller
+
+volumes:
+  shared_home:
+  shared_apps:
+  shared_scratch:
