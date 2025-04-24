@@ -1,9 +1,78 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Scott Friedman
+#
 # Create launch templates for compute nodes
 set -e
 
+# Default options
+TEST_MODE=false
+
+# Check if running in test mode with LocalStack
+if [ "${TEST_MODE:-false}" = "true" ]; then
+  # Set AWS endpoint URL for LocalStack
+  AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+  echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+fi
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --test-mode)
+      TEST_MODE=true
+      export TEST_MODE=true
+      export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+      echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+      shift
+      ;;
+    --help)
+      echo "Usage: $0 [options]"
+      echo "Options:"
+      echo "  --test-mode  Run in test mode using LocalStack for AWS service emulation"
+      echo "  --help       Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Run '$0 --help' for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Helper function for AWS CLI commands with optional LocalStack endpoint
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    aws --endpoint-url="$AWS_ENDPOINT_URL" "$@"
+  else
+    aws "$@"
+  fi
+}
+
 # Load resource IDs
 source ../aws-resources.txt
+
+# For test mode, use mock resources
+if [ "$TEST_MODE" = "true" ]; then
+  echo "Test mode: Using mock launch templates"
+  
+  # Mock resource IDs
+  CPU_LAUNCH_TEMPLATE_ID="lt-cpu-test12345"
+  GPU_LAUNCH_TEMPLATE_ID="lt-gpu-test12345"
+  INFERENTIA_LAUNCH_TEMPLATE_ID="lt-inf-test12345"
+  TRAINIUM_LAUNCH_TEMPLATE_ID="lt-trn-test12345"
+  
+  # Update resources file and exit
+  cat << RESOURCES >> ../aws-resources.txt
+CPU_LAUNCH_TEMPLATE_ID=$CPU_LAUNCH_TEMPLATE_ID
+GPU_LAUNCH_TEMPLATE_ID=$GPU_LAUNCH_TEMPLATE_ID
+INFERENTIA_LAUNCH_TEMPLATE_ID=$INFERENTIA_LAUNCH_TEMPLATE_ID
+TRAINIUM_LAUNCH_TEMPLATE_ID=$TRAINIUM_LAUNCH_TEMPLATE_ID
+RESOURCES
+
+  echo "Test mode: Mock launch templates created successfully."
+  exit 0
+fi
 
 # Create launch template for CPU compute nodes
 echo "Creating launch template for CPU compute nodes..."

@@ -1,9 +1,75 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Scott Friedman
+#
 # Configure Slurm AWS Plugin Version 2
 set -e
 
+# Default options
+TEST_MODE=false
+
+# Check if running in test mode with LocalStack
+if [ "${TEST_MODE:-false}" = "true" ]; then
+  # Set AWS endpoint URL for LocalStack
+  AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+  echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+fi
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --test-mode)
+      TEST_MODE=true
+      export TEST_MODE=true
+      export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+      echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+      shift
+      ;;
+    --help)
+      echo "Usage: $0 [options]"
+      echo "Options:"
+      echo "  --test-mode  Run in test mode using LocalStack for AWS service emulation"
+      echo "  --help       Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Run '$0 --help' for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Helper function for AWS CLI commands with optional LocalStack endpoint
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    aws --endpoint-url="$AWS_ENDPOINT_URL" "$@"
+  else
+    aws "$@"
+  fi
+}
+
 # Load resource IDs
 source ../aws-resources.txt
+
+# For test mode, skip actual installation
+if [ "$TEST_MODE" = "true" ]; then
+  echo "Test mode: Skipping Slurm AWS Plugin installation and configuration"
+  echo "Test mode: Creating mock AWS credentials file for Slurm"
+  
+  # Create a mock AWS credentials file
+  mkdir -p ~/.aws
+  cat << EOF > ~/.aws/credentials
+[default]
+aws_access_key_id = ${ACCESS_KEY_ID}
+aws_secret_access_key = ${SECRET_ACCESS_KEY}
+region = ${AWS_REGION}
+endpoint_url = ${AWS_ENDPOINT_URL}
+EOF
+
+  echo "Test mode: Mock Slurm AWS Plugin configuration completed successfully."
+  exit 0
+fi
 
 # Install dependencies
 echo "Installing dependencies for AWS Slurm Plugin v2..."

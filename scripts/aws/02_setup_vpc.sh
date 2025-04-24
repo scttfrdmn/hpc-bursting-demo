@@ -1,13 +1,92 @@
 #!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Scott Friedman
+#
 # Setup VPC, subnets, and security groups
 set -e
+
+# Default options
+TEST_MODE=false
+
+# Check if running in test mode with LocalStack
+if [ "${TEST_MODE:-false}" = "true" ]; then
+  # Set AWS endpoint URL for LocalStack
+  AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+  echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+fi
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --test-mode)
+      TEST_MODE=true
+      export TEST_MODE=true
+      export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+      echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+      shift
+      ;;
+    --help)
+      echo "Usage: $0 [options]"
+      echo "Options:"
+      echo "  --test-mode  Run in test mode using LocalStack for AWS service emulation"
+      echo "  --help       Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Run '$0 --help' for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Helper function for AWS CLI commands with optional LocalStack endpoint
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    aws --endpoint-url="$AWS_ENDPOINT_URL" "$@"
+  else
+    aws "$@"
+  fi
+}
 
 # Load resource IDs
 source ../aws-resources.txt
 
+# For test mode, use mock resources
+if [ "$TEST_MODE" = "true" ]; then
+  echo "Test mode: Using mock VPC and networking resources"
+  
+  # Mock resource IDs
+  VPC_ID="vpc-test12345"
+  IGW_ID="igw-test12345"
+  PUBLIC_SUBNET_ID="subnet-public-test12345"
+  PRIVATE_SUBNET_ID="subnet-private-test12345"
+  PUBLIC_RTB_ID="rtb-public-test12345"
+  PRIVATE_RTB_ID="rtb-private-test12345"
+  BASTION_SG_ID="sg-bastion-test12345"
+  COMPUTE_SG_ID="sg-compute-test12345"
+  HOSTED_ZONE_ID="Z12345TESTMOCK"
+  
+  # Update resources file and exit
+  cat << RESOURCES >> ../aws-resources.txt
+VPC_ID=$VPC_ID
+PUBLIC_SUBNET_ID=$PUBLIC_SUBNET_ID
+PRIVATE_SUBNET_ID=$PRIVATE_SUBNET_ID
+IGW_ID=$IGW_ID
+PUBLIC_RTB_ID=$PUBLIC_RTB_ID
+PRIVATE_RTB_ID=$PRIVATE_RTB_ID
+BASTION_SG_ID=$BASTION_SG_ID
+COMPUTE_SG_ID=$COMPUTE_SG_ID
+HOSTED_ZONE_ID=$HOSTED_ZONE_ID
+RESOURCES
+
+  echo "Test mode: Mock VPC and networking setup completed successfully."
+  exit 0
+fi
+
 # Create VPC
 echo "Creating VPC..."
-VPC_ID=$(aws ec2 create-vpc \
+VPC_ID=$(aws_cmd ec2 create-vpc \
     --cidr-block 10.1.0.0/16 \
     --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=hpc-demo-vpc}]' \
     --region $AWS_REGION \

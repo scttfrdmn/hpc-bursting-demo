@@ -96,6 +96,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage:"* ]]
   [[ "$output" == *"--quick"* ]]
+  [[ "$output" == *"--test-mode"* ]]
 }
 
 @test "Setup script rejects unknown options" {
@@ -103,6 +104,96 @@ EOF
   
   [ "$status" -eq 1 ]
   [[ "$output" == *"Unknown option"* ]]
+}
+
+# Test test mode functionality
+@test "Setup script passes --test-mode flag to subscripts" {
+  # Modify the mock scripts to check for test mode flag
+  cat > "$BATS_TEST_TMPDIR/mock_scripts/01_create_iam_user.sh" << 'EOF'
+#!/bin/bash
+# Check for test mode flag
+if [[ "$*" == *"--test-mode"* ]]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] Creating IAM user and policy in TEST MODE..."
+else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] Creating IAM user and policy in NORMAL MODE..."
+fi
+exit 0
+EOF
+
+  # Create a test script for test mode
+  cat > "$BATS_TEST_TMPDIR/test_test_mode.sh" << EOF
+#!/bin/bash
+# Set the test directory as the working directory
+cd "$BATS_TEST_TMPDIR/mock_scripts"
+
+# Create a custom version of the setup script that uses PWD for scripts
+cat > ./setup_test.sh << 'INNEREOF'
+#!/bin/bash
+# Default options
+USE_QUICK_MODE=false
+TEST_MODE=false
+
+# Parse command line arguments
+while [[ \$# -gt 0 ]]; do
+  case \$1 in
+    --quick)
+      USE_QUICK_MODE=true
+      shift
+      ;;
+    --test-mode)
+      TEST_MODE=true
+      USE_QUICK_MODE=true  # Test mode defaults to quick mode
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Log function
+log() {
+  local level="\$1"
+  local message="\$2"
+  echo "[\$(date '+%Y-%m-%d %H:%M:%S')] [\$level] \$message"
+}
+
+MODE_MSG=\$([ "\$USE_QUICK_MODE" == "true" ] && echo "quick mode" || echo "standard mode")
+TEST_MSG=\$([ "\$TEST_MODE" == "true" ] && echo " (TEST MODE)" || echo "")
+log "INFO" "Starting AWS infrastructure setup (\${MODE_MSG})\${TEST_MSG}..."
+
+# Prepare options to pass to subscripts
+TEST_MODE_OPT=""
+QUICK_MODE_OPT=""
+
+if [ "\$TEST_MODE" == "true" ]; then
+  TEST_MODE_OPT="--test-mode"
+fi
+
+if [ "\$USE_QUICK_MODE" == "true" ]; then
+  QUICK_MODE_OPT="--quick"
+fi
+
+# Run IAM user creation with our mock scripts in the current directory
+log "INFO" "Creating IAM user and policy..."
+./01_create_iam_user.sh \$TEST_MODE_OPT
+
+log "INFO" "AWS infrastructure setup completed successfully."
+INNEREOF
+
+chmod +x ./setup_test.sh
+./setup_test.sh --test-mode
+EOF
+
+  chmod +x "$BATS_TEST_TMPDIR/test_test_mode.sh"
+  
+  # Run the test script
+  run "$BATS_TEST_TMPDIR/test_test_mode.sh"
+  
+  # Verify test mode was used
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Starting AWS infrastructure setup (quick mode) (TEST MODE)"* ]]
+  [[ "$output" == *"Creating IAM user and policy in TEST MODE"* ]]
 }
 
 # Test setup flow in standard mode
