@@ -1,303 +1,141 @@
 # HPC Bursting Demo: Local VM to AWS
 
-This repository contains scripts and configuration for creating a hybrid HPC environment that bursts from a local virtual machine to AWS.
+A comprehensive solution for creating a hybrid HPC environment that bursts from a local virtual machine to AWS cloud resources.
 
 ## Overview
 
-This project demonstrates how to set up an "on-premises" HPC environment with the capability to burst to the AWS cloud. It includes:
+This project demonstrates how to set up an "on-premises" HPC environment with the capability to burst to the AWS cloud when compute demand exceeds local capacity.
 
-- Local VM HPC system with Slurm, LDAP, and NFS
-- AWS infrastructure with VPC, bastion host, and Route 53
-- WireGuard VPN tunnel for secure connectivity
-- Slurm AWS Plugin v2 for cloud bursting
-- Support for CPU and GPU workloads
+### Key Features
+
+- **On-Premises Components**: Slurm, LDAP, and NFS on a single VM
+- **Secure Connectivity**: WireGuard VPN tunnel between on-premises and AWS
+- **Dynamic Cloud Resources**: Automatically provision and terminate AWS instances
+- **Cost Control**: Only pay for cloud resources when you need them
+- **Flexible Workloads**: Support for both CPU and GPU compute jobs
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph "On-Premises"
-        slurm["Slurm Controller"]
-        ldap["LDAP Server"]
-        nfs["NFS Server"]
-        wg1["WireGuard Endpoint"]
-        
-        slurm --- nfs
-        slurm --- ldap
-        slurm --- wg1
-    end
-    
-    subgraph "AWS Cloud"
-        subgraph "VPC"
-            subgraph "Public Subnet"
-                bastion["Bastion Host"]
-                wg2["WireGuard Endpoint"]
-                bastion --- wg2
-            end
-            
-            subgraph "Private Subnet"
-                node1["Compute Node 1"]
-                node2["Compute Node 2"]
-                nodeN["Compute Node N"]
-                gpu1["GPU Node 1"]
-                gpu2["GPU Node 2"]
-            end
-            
-            subgraph "AWS Services"
-                r53["Route 53 Private Zone"]
-                iam["IAM Roles & Policies"]
-            end
-            
-            bastion --- node1
-            bastion --- node2
-            bastion --- nodeN
-            bastion --- gpu1
-            bastion --- gpu2
-            bastion --- r53
-            
-            r53 -.- node1
-            r53 -.- node2
-            r53 -.- nodeN
-            r53 -.- gpu1
-            r53 -.- gpu2
-        end
-    end
-    
-    wg1 ===|"Secure Tunnel"| wg2
-    
-    slurm -->|"Launch Requests"| iam
-    iam -->|"EC2 API"| node1
-    iam -->|"EC2 API"| node2
-    iam -->|"EC2 API"| nodeN
-    iam -->|"EC2 API"| gpu1
-    iam -->|"EC2 API"| gpu2
-    
-    node1 -.->|"Mount NFS"| nfs
-    node2 -.->|"Mount NFS"| nfs
-    nodeN -.->|"Mount NFS"| nfs
-    gpu1 -.->|"Mount NFS"| nfs
-    gpu2 -.->|"Mount NFS"| nfs
-    
-    node1 -.->|"Authentication"| ldap
-    node2 -.->|"Authentication"| ldap
-    nodeN -.->|"Authentication"| ldap
-    gpu1 -.->|"Authentication"| ldap
-    gpu2 -.->|"Authentication"| ldap
-```
+<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+  <!-- SVG Architecture Diagram (preserved from original) -->
+  <!-- On-Premises Environment -->
+  <rect x="50" y="50" width="300" height="200" rx="10" fill="#f5f5f5" stroke="#000" />
+  <text x="200" y="70" font-family="Arial" text-anchor="middle" font-weight="bold">On-Premises</text>
+  
+  <!-- On-Premises Components -->
+  <rect x="80" y="90" width="100" height="40" rx="5" fill="#b3e0ff" stroke="#000" />
+  <text x="130" y="115" font-family="Arial" text-anchor="middle" font-size="12">Slurm Controller</text>
+  
+  <rect x="80" y="150" width="100" height="40" rx="5" fill="#c2f0c2" stroke="#000" />
+  <text x="130" y="175" font-family="Arial" text-anchor="middle" font-size="12">LDAP Server</text>
+  
+  <rect x="210" y="90" width="100" height="40" rx="5" fill="#ffcc99" stroke="#000" />
+  <text x="260" y="115" font-family="Arial" text-anchor="middle" font-size="12">NFS Server</text>
+  
+  <rect x="210" y="150" width="100" height="40" rx="5" fill="#d9b3ff" stroke="#000" />
+  <text x="260" y="175" font-family="Arial" text-anchor="middle" font-size="12">WireGuard</text>
+  
+  <!-- On-Premises Connections -->
+  <line x1="130" y1="130" x2="130" y2="150" stroke="#000" />
+  <line x1="180" y1="110" x2="210" y2="110" stroke="#000" />
+  <line x1="180" y1="170" x2="210" y2="170" stroke="#000" />
+  
+  <!-- AWS Cloud Environment -->
+  <rect x="450" y="50" width="300" height="450" rx="10" fill="#f5f5f5" stroke="#000" />
+  <text x="600" y="70" font-family="Arial" text-anchor="middle" font-weight="bold">AWS Cloud</text>
+  
+  <!-- Public Subnet -->
+  <rect x="470" y="90" width="260" height="100" rx="5" fill="#e6f7ff" stroke="#000" />
+  <text x="600" y="105" font-family="Arial" text-anchor="middle" font-size="12">Public Subnet</text>
+  
+  <rect x="490" y="120" width="100" height="40" rx="5" fill="#b3e0ff" stroke="#000" />
+  <text x="540" y="145" font-family="Arial" text-anchor="middle" font-size="12">Bastion Host</text>
+  
+  <rect x="610" y="120" width="100" height="40" rx="5" fill="#d9b3ff" stroke="#000" />
+  <text x="660" y="145" font-family="Arial" text-anchor="middle" font-size="12">WireGuard</text>
+  
+  <!-- Private Subnet -->
+  <rect x="470" y="210" width="260" height="160" rx="5" fill="#e6ffe6" stroke="#000" />
+  <text x="600" y="225" font-family="Arial" text-anchor="middle" font-size="12">Private Subnet</text>
+  
+  <rect x="490" y="240" width="100" height="40" rx="5" fill="#ffffcc" stroke="#000" />
+  <text x="540" y="265" font-family="Arial" text-anchor="middle" font-size="12">Compute Node</text>
+  
+  <rect x="610" y="240" width="100" height="40" rx="5" fill="#ffffcc" stroke="#000" />
+  <text x="660" y="265" font-family="Arial" text-anchor="middle" font-size="12">Compute Node</text>
+  
+  <rect x="550" y="300" width="100" height="40" rx="5" fill="#ffd6cc" stroke="#000" />
+  <text x="600" y="325" font-family="Arial" text-anchor="middle" font-size="12">GPU Node</text>
+  
+  <!-- AWS Services -->
+  <rect x="470" y="390" width="260" height="90" rx="5" fill="#ffe6e6" stroke="#000" />
+  <text x="600" y="405" font-family="Arial" text-anchor="middle" font-size="12">AWS Services</text>
+  
+  <rect x="490" y="420" width="100" height="40" rx="5" fill="#ffcccc" stroke="#000" />
+  <text x="540" y="445" font-family="Arial" text-anchor="middle" font-size="12">Route 53</text>
+  
+  <rect x="610" y="420" width="100" height="40" rx="5" fill="#ffcccc" stroke="#000" />
+  <text x="660" y="445" font-family="Arial" text-anchor="middle" font-size="12">IAM</text>
+  
+  <!-- Cross-Environment Connection -->
+  <path d="M 310 170 Q 380 170 380 310 Q 380 450 450 450" stroke="#000" stroke-width="2" stroke-dasharray="5,5" fill="none" />
+  <text x="380" y="280" font-family="Arial" text-anchor="middle" font-size="10" transform="rotate(90 380 280)">Secure Tunnel</text>
+  
+  <!-- AWS Internal Connections -->
+  <line x1="590" y1="140" x2="610" y2="140" stroke="#000" />
+  <line x1="540" y1="160" x2="540" y2="240" stroke="#000" />
+  <line x1="660" y1="160" x2="660" y2="240" stroke="#000" />
+  <line x1="540" y1="280" x2="540" y2="340" stroke="#000" stroke-dasharray="3,3" />
+  <line x1="660" y1="280" x2="660" y2="340" stroke="#000" stroke-dasharray="3,3" />
+  <line x1="600" y1="340" x2="600" y2="420" stroke="#000" />
+  
+  <!-- Data Flow Lines -->
+  <path d="M 130 200 Q 130 500 490 440" stroke="#000" stroke-width="1" stroke-dasharray="3,3" fill="none" />
+  <text x="300" y="480" font-family="Arial" text-anchor="middle" font-size="10">Launch Requests</text>
+  
+  <path d="M 260 200 Q 260 550 550 340" stroke="#000" stroke-width="1" stroke-dasharray="3,3" fill="none" />
+  <text x="400" y="520" font-family="Arial" text-anchor="middle" font-size="10">NFS/Authentication</text>
+</svg>
+
+## Quick Start
+
+For rapid deployment, see the [Getting Started Guide](docs/getting-started.md).
+
+## Documentation
+
+- [**Getting Started**](docs/getting-started.md): Quick setup for evaluation
+- [**Architecture**](docs/architecture.md): Detailed system design
+- [**Installation**](docs/installation/README.md)
+  - [Manual Installation](docs/installation/manual.md)
+  - [Ansible Installation](docs/installation/ansible.md)
+  - [CloudFormation Installation](docs/installation/cloudformation.md)
+- [**Configuration**](docs/configuration.md): Customization options
+- [**Troubleshooting**](docs/troubleshooting.md): Common issues and solutions
 
 ## Prerequisites
 
-- Rocky Linux 9 VM minimal with basic installation and one local user with sudo privileges.
-- AWS account with appropriate permissions
+- Rocky Linux 9 VM with sudo privileges
+- AWS account with permissions for VPC, EC2, IAM, Route53
+- AWS CLI configured with appropriate credentials
 - Internet connectivity for the VM
 
 ## Repository Structure
 
 - `scripts/` - Setup scripts for local and AWS systems
-- `config/` - Configuration templates
-- `examples/` - Example jobs and workflows
+- `ansible/` - Ansible playbook for automated deployment
+- `cloudformation/` - CloudFormation template for AWS
 - `docs/` - Documentation and guides
-- `ansible/` - Ansible playbook for automated local deployment
-- `cloudformation/` - Cloudformation template for automated AWS deployment
+- `tests/` - Test framework and test cases
 
-## Getting Started
+## Contributing
 
-See the [Installation Guide](docs/installation.md) for detailed setup instructions.
+Contributions are welcome! Please see the [Contributing Guide](CONTRIBUTING.md) for details on how to contribute to this project, including:
 
-## Ansible Deployment
-
-For automated deployment of the local HPC system, you can use the provided Ansible playbook:
-
-### Prerequisites
-
-1. Install Ansible on your control machine (which could be the local VM):
-   ```bash
-   # On RHEL/Rocky/Fedora
-   sudo dnf install -y ansible
-   
-   # On Debian/Ubuntu
-   sudo apt update
-   sudo apt install -y ansible
-   
-   # Or via pip
-   pip install ansible
-
-2. If you are not using the local VM - set up SSH access to your target Rocky 9 VM
-
-### Configuration
-
-1. Create an inventory file for your environment:
-
-   ```bash
-   cat > inventory.ini << EOF
-   [hpc_local]
-   your-vm-ip-address
-   
-   [hpc_local:vars]
-   ansible_user=your-username
-   ansible_ssh_private_key_file=/path/to/your/private/key
-   # Optional AWS parameters if you've already created AWS resources
-   aws_region=us-west-2
-   private_subnet_id=subnet-xxxxxxxx
-   compute_security_group_id=sg-xxxxxxxx
-   [hpc_local:vars]
-   ansible_user=your-username
-   ansible_ssh_private_key_file=/path/to/your/private/key
-   # Optional AWS parameters if you've already created AWS resources
-   aws_region=us-west-2
-   private_subnet_id=subnet-xxxxxxxx
-   compute_security_group_id=sg-xxxxxxxx
-   # Optional accelerator parameters
-   gpu_launch_template_id=lt-xxxxxxxx
-   inferentia_launch_template_id=lt-xxxxxxxx
-   trainium_launch_template_id=lt-xxxxxxxx
-   EOF
-   ```
-
-2. Review and customize the Ansible variables:
-
-- `hostname`: Hostname for your local system
-- `ldap_admin_password`: Password for LDAP admin
-- `mysql_slurm_password`: Password for Slurm database
-- `aws_region`: AWS region for bursting
-- `subnet_id`: AWS subnet ID for compute nodes
-- `compute_sg_id`: Security group ID for compute nodes
-
-### Running the Playbook
-
-1. Run the Ansible playbook:
-
-   ```bash
-   ansible-playbook -i inventory.ini hpc_bursting_local_setup.yml
-   ```
-
-2. The playbook will:
-
-   - Update the system
-   - Set up NFS server
-   - Configure LDAP authentication
-   - Install and configure Slurm
-   - Set up WireGuard
-   - Configure AWS Plugin for Slurm v2
-   - Configure centralized logging
-
-### Post-Installation
-
-After the Ansible playbook completes:
-
-1. Configure AWS CLI with your credentials:
-
-```
-aws configure
-```
-
-2. Set up the AWS infrastructure using one of these methods:
-
-   Option A: Step-by-step AWS setup
-
-```
-cd scripts/aws
-./setup_aws_infra.sh
-```
-
-​	Option B: CloudFormation deployment
-
-```
-# After creating AMIs with Option A or manually
-./create_cf_parameters.sh
-aws cloudformation create-stack --stack-name hpc-bursting-demo \
-  --template-body file://../../cloudformation/hpc-bursting-infrastructure.yaml \
-  --parameters file://../../cloudformation/ami-parameters.json \
-  --capabilities CAPABILITY_IAM
-```
-
-3. Once the AWS infrastructure is set up, WireGuard will be automatically configured for the bastion connection.
-
-4. Test the bursting capability:
-
-```
-./test_bursting.sh
-```
-
-
-
-## CloudFormation Deployment
-
-For AWS-native deployment, you can use the included CloudFormation template with the AMIs created in the previous steps:
-
-### Prerequisites
-- Complete the AMI creation steps (running `setup_aws_infra.sh` or at least the `04_create_amis.sh` script)
-- AWS CLI configured with appropriate permissions
-
-### Deployment Steps
-
-1. Generate CloudFormation parameters file from your created AMIs:
-```bash
-cd scripts/aws
-./create_cf_parameters.sh
-```
-2. Deploy the CloudFormation stack:
-
-```bash
-aws cloudformation create-stack \
-  --stack-name hpc-bursting-demo \
-  --template-body file://../../cloudformation/hpc-bursting-infrastructure.yaml \
-  --parameters file://../../cloudformation/ami-parameters.json \
-  --capabilities CAPABILITY_IAM \
-  --region us-west-2
-```
-3. Monitor stack creation:
-
-```bash
-aws cloudformation describe-stacks --stack-name hpc-bursting-demo
-```
-4. Once the stack is complete, retrieve the outputs:
-
-```bash
-aws cloudformation describe-stacks \
-  --stack-name hpc-bursting-demo \
-  --query 'Stacks[0].Outputs' \
-  --output table
-```
-5. Update your local WireGuard configuration with the bastion host's public IP:
-
-```bash
-BASTION_PUBLIC_IP=$(aws cloudformation describe-stacks \
-  --stack-name hpc-bursting-demo \
-  --query 'Stacks[0].Outputs[?OutputKey==`BastionPublicIP`].OutputValue' \
-  --output text)
-
-# Get the bastion's WireGuard public key
-BASTION_PUBLIC_KEY=$(ssh -i hpc-demo-key.pem rocky@$BASTION_PUBLIC_IP "cat /etc/wireguard/publickey")
-
-# Update your local WireGuard configuration
-cat << WIREGUARD | sudo tee -a /etc/wireguard/wg0.conf
-[Peer]
-PublicKey = $BASTION_PUBLIC_KEY
-AllowedIPs = 10.0.0.2/32, 10.1.0.0/16
-Endpoint = $BASTION_PUBLIC_IP:51820
-PersistentKeepalive = 25
-WIREGUARD
-
-sudo systemctl restart wg-quick@wg0
-```
-6. Update the Slurm AWS plugin configuration with the CloudFormation outputs:
-
-```bash
-cd scripts/aws
-./update_slurm_from_cloudformation.sh hpc-bursting-demo
-```
-
-7. Clean Up
-
-   To delete the CloudFormation stack when you're done:
-
-```bash
-aws cloudformation delete-stack --stack-name hpc-bursting-demo
-```
-This provides a clean approach to integrating your existing AMI creation script with CloudFormation, and gives users clear instructions on how to use the CloudFormation-based deployment method.
+- Setting up a development environment
+- Testing guidelines and procedures
+- Pull request process
+- Coding standards
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
-
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

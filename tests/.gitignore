@@ -1,0 +1,16 @@
+# Test artifacts
+/test_libs/
+*.log
+*.tmp
+/coverage/
+
+# BATS temporary files
+/bats-*
+
+# Test reports
+/reports/
+*.xml
+*.html
+
+# Local environment
+.env
