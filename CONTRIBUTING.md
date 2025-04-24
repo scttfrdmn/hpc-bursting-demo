@@ -13,7 +13,7 @@ Thank you for your interest in contributing to the HPC Bursting Demo project! Th
 
 ## Code of Conduct
 
-This project adheres to a Code of Conduct that sets expectations for participation in our community. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
+This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
 
 ## How to Contribute
 
