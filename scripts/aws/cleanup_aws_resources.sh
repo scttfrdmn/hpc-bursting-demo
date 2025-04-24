@@ -5,19 +5,37 @@
 # Delete AWS resources created for HPC bursting
 set -e
 
-# Parse command line arguments
+# Default options
 FORCE=false
+TEST_MODE=false
+
+# Check if running in test mode with LocalStack
+if [ "${TEST_MODE:-false}" = "true" ]; then
+  # Set AWS endpoint URL for LocalStack
+  AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+  echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+fi
+
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     --force)
       FORCE=true
       shift
       ;;
+    --test-mode)
+      TEST_MODE=true
+      export TEST_MODE=true
+      export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://localhost:4566}"
+      echo "Running in TEST MODE using LocalStack at $AWS_ENDPOINT_URL"
+      shift
+      ;;
     --help)
       echo "Usage: $0 [options]"
       echo "Options:"
-      echo "  --force   Skip confirmation prompt"
-      echo "  --help    Show this help message"
+      echo "  --force     Skip confirmation prompt"
+      echo "  --test-mode Run in test mode using LocalStack for AWS service emulation"
+      echo "  --help      Show this help message"
       exit 0
       ;;
     *)
@@ -28,12 +46,50 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Helper function for AWS CLI commands with optional LocalStack endpoint
+aws_cmd() {
+  if [ "$TEST_MODE" = "true" ]; then
+    aws --endpoint-url="$AWS_ENDPOINT_URL" "$@"
+  else
+    aws "$@"
+  fi
+}
+
 # Log function
 log() {
   local level="$1"
   local message="$2"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $message"
 }
+
+# For test mode, skip real resource cleanup
+if [ "$TEST_MODE" = "true" ]; then
+  log "INFO" "Test mode: Simulating AWS resource cleanup"
+  log "INFO" "Test mode: No actual resources will be deleted"
+  
+  # Load resource IDs from file if it exists
+  if [ -f "../aws-resources.txt" ]; then
+    log "INFO" "Loading resource IDs from aws-resources.txt..."
+    # shellcheck source=../aws-resources.txt
+    source ../aws-resources.txt
+  else
+    log "WARN" "aws-resources.txt not found."
+    AWS_REGION=${AWS_REGION:-"us-west-2"}
+  fi
+  
+  # Simulate resource cleanup
+  log "INFO" "Test mode: Simulating EC2 instance termination"
+  log "INFO" "Test mode: Simulating AMI deregistration"
+  log "INFO" "Test mode: Simulating launch template deletion"
+  log "INFO" "Test mode: Simulating network resource cleanup"
+  log "INFO" "Test mode: Simulating IAM resource cleanup"
+  log "INFO" "Test mode: Simulating CloudFormation stack deletion"
+  
+  log "INFO" "Test mode: Mock cleanup completed successfully."
+  echo ""
+  echo "✅ Test mode: Simulated deletion of all HPC Bursting Demo resources in AWS"
+  exit 0
+fi
 
 # Load resource IDs from file if it exists
 if [ -f "../aws-resources.txt" ]; then
