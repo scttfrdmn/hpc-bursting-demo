@@ -1,5 +1,14 @@
 # HPC Bursting Demo: Local VM to AWS
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://img.shields.io/badge/Tests-Passing-green.svg)](https://github.com/scttfrdmn/hpc-bursting-demo/actions)
+[![AWS](https://img.shields.io/badge/AWS-Compatible-orange.svg)](https://aws.amazon.com/)
+[![Slurm](https://img.shields.io/badge/Slurm-Integrated-blue.svg)](https://slurm.schedmd.com/)
+[![Documentation](https://img.shields.io/badge/Docs-Available-brightgreen.svg)](https://github.com/scttfrdmn/hpc-bursting-demo/tree/main/docs)
+[![ShellCheck](https://img.shields.io/badge/ShellCheck-Integrated-brightgreen.svg)](https://www.shellcheck.net/)
+[![Status](https://img.shields.io/badge/Status-Beta-yellow.svg)](https://github.com/scttfrdmn/hpc-bursting-demo)
+[![Platform](https://img.shields.io/badge/Platform-Rocky_Linux-lightgrey.svg)](https://rockylinux.org/)
+
 A comprehensive solution for creating a hybrid HPC environment that bursts from a local virtual machine to AWS cloud resources.
 
 ## Overview
