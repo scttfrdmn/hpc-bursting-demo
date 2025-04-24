@@ -38,6 +38,7 @@ log() {
 # Load resource IDs from file if it exists
 if [ -f "../aws-resources.txt" ]; then
   log "INFO" "Loading resource IDs from aws-resources.txt..."
+  # shellcheck source=../aws-resources.txt
   source ../aws-resources.txt
 else
   log "WARN" "aws-resources.txt not found. Will try to identify resources by tag."
@@ -64,13 +65,13 @@ INSTANCE_IDS=$(aws ec2 describe-instances \
   --filters "Name=tag:Project,Values=HPC-Bursting-Demo" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query "Reservations[].Instances[].InstanceId" \
   --output text \
-  --region $AWS_REGION)
+  --region "$AWS_REGION")
 
 if [ ! -z "$INSTANCE_IDS" ]; then
   log "INFO" "Found instances to terminate: $INSTANCE_IDS"
   aws ec2 terminate-instances \
-    --instance-ids $INSTANCE_IDS \
-    --region $AWS_REGION
+    --instance-ids "$INSTANCE_IDS" \
+    --region "$AWS_REGION"
 
   log "INFO" "Waiting for instances to terminate..."
   aws ec2 wait instance-terminated \
