@@ -35,9 +35,9 @@ The testing approach follows a progressive implementation with multiple layers:
 - **Static Analysis**
   - [x] Integrate ShellCheck for script validation
   - [x] Document common issues and fixes in [linting-improvements.md](linting-improvements.md)
-  - [ ] Define and enforce style guidelines
+  - [x] Define and enforce style guidelines
   - [ ] Fix identified linting issues in all scripts
-  - [ ] Add pre-commit hooks for automated checking
+  - [x] Add pre-commit hooks for automated checking
 
 ### Phase 2: Mock AWS Testing
 

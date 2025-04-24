@@ -1,0 +1,79 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Scott Friedman
+#
+# Git pre-commit hook for HPC Bursting Demo
+
+set -e  # Exit on error
+
+echo "Running pre-commit checks..."
+
+# Get the root directory of the repository
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Check if ShellCheck is installed
+if ! command -v shellcheck &>/dev/null; then
+    echo "ERROR: ShellCheck is not installed. Please install it:"
+    echo "  - macOS: brew install shellcheck"
+    echo "  - Linux: sudo apt install shellcheck"
+    echo "See https://github.com/koalaman/shellcheck#installing for more options."
+    exit 1
+fi
+
+# Check if BATS is installed
+if ! command -v bats &>/dev/null; then
+    echo "ERROR: BATS is not installed. Please install it:"
+    echo "  - macOS: brew install bats-core"
+    echo "  - Linux: sudo apt install bats"
+    echo "See https://github.com/bats-core/bats-core#installation for more options."
+    exit 1
+fi
+
+# Get all staged shell script files
+STAGED_SHELL_SCRIPTS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$' || true)
+
+if [ -n "$STAGED_SHELL_SCRIPTS" ]; then
+    echo "Running ShellCheck on staged shell scripts..."
+    
+    # Run ShellCheck on staged shell scripts
+    for file in $STAGED_SHELL_SCRIPTS; do
+        echo "Checking $file..."
+        shellcheck -x "$REPO_ROOT/$file"
+    done
+    
+    echo "✓ All shell scripts passed ShellCheck"
+    
+    # Run tests related to the changed files
+    echo "Running BATS tests for changed files..."
+    
+    # Create an array to store the test files to run
+    TEST_FILES=()
+    
+    # For each changed file, find related test files
+    for file in $STAGED_SHELL_SCRIPTS; do
+        # Extract the basename without extension
+        base_name=$(basename "$file" .sh)
+        
+        # Check if a test file exists for this script
+        for test_file in "$REPO_ROOT/tests/bats/"*"$base_name"*.bats; do
+            if [ -f "$test_file" ]; then
+                TEST_FILES+=("$test_file")
+            fi
+        done
+    done
+    
+    # Run tests if any matching test files were found
+    if [ ${#TEST_FILES[@]} -gt 0 ]; then
+        echo "Running tests: ${TEST_FILES[*]}"
+        cd "$REPO_ROOT"
+        bats "${TEST_FILES[@]}"
+        echo "✓ All tests passed"
+    else
+        echo "No matching test files found for the changed scripts."
+    fi
+else
+    echo "No shell scripts are staged for commit."
+fi
+
+echo "Pre-commit checks completed successfully!"
+exit 0

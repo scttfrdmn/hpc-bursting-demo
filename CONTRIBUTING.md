@@ -42,6 +42,19 @@ For detailed instructions on installing the testing tools, refer to the [tests/R
 
 The project uses a comprehensive testing strategy outlined in the [Testing Roadmap](docs/testing-roadmap.md).
 
+### Setting Up Pre-commit Hooks
+
+We use Git pre-commit hooks to automatically run linting and tests on changed files. To set up the hooks:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+This will:
+- Configure Git to use the hooks in the `.githooks` directory
+- Ensure all hooks are executable
+- Run ShellCheck and relevant BATS tests when you make a commit
+
 ### Running Tests
 
 We use BATS (Bash Automated Testing System) for shell script testing. To run tests:
@@ -63,12 +76,26 @@ Please see the [Shell Testing Guide](docs/shell-testing-guide.md) for detailed i
 
 ### Linting
 
-All shell scripts should be checked with ShellCheck:
+All shell scripts should be checked with ShellCheck. To run linting manually:
 
 ```bash
 cd tests
 ./lint_scripts.sh
 ```
+
+To lint only a specific directory:
+
+```bash
+./lint_scripts.sh --dir scripts/aws
+```
+
+For more verbose output:
+
+```bash
+./lint_scripts.sh --verbose
+```
+
+See [linting-improvements.md](docs/linting-improvements.md) for common linting issues and how to fix them.
 
 ## Coding Standards
 
